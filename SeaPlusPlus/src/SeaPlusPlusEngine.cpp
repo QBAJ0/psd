@@ -11,3 +11,7 @@ std::string SeaPlusPlusEngine::processCreature(const SeaCreature& creature) {
 
     return "Must be released";
 }
+
+std::string SeaPlusPlusEngine::processBag(const Bag& bag) {
+    return bagChecker.checkBag(bag);
+}

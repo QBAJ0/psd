@@ -14,6 +14,10 @@ public:
 
     std::string getName() const;
     std::string getLicenseNumber() const;
+    void setName(const std::string& newName);
+    void setLicenseNumber(const std::string& newLicenseNumber);
+    void saveToFile(const std::string& filename) const;
+    void loadFromFile(const std::string& filename);
 };
 
 #endif

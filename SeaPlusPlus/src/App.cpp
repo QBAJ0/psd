@@ -1,7 +1,9 @@
 #include "App.h"
 #include <cctype>
+#include <fstream>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -36,30 +38,175 @@ std::string normalizeSpeciesForType(const std::string& type, const std::string& 
 
     return "";
 }
+
+std::string makeSessionFilename(const std::string& anglerName) {
+    if (anglerName.empty()) {
+        return "unknown_session.txt";
+    }
+
+    std::string filePart = anglerName;
+    for (std::size_t i = 0; i < filePart.size(); ++i) {
+        if (filePart[i] == ' ') {
+            filePart[i] = '_';
+        }
+    }
+
+    return filePart + "_session.txt";
+}
 }  // namespace
 
 void App::run() {
-    std::string name;
-    std::string license;
+    std::string choice;
+    std::string name = "";
+    std::string license = "";
 
-    std::cout << "Enter angler name: ";
-    std::getline(std::cin, name);
+    bool running = true;
+    while (running) {
+        std::cout << "\n1. Add catch\n";
+        std::cout << "2. Check bag\n";
+        std::cout << "3. Save session\n";
+        std::cout << "4. Load session\n";
+        std::cout << "5. Exit\n";
+        std::cout << "Choose option: ";
+        std::getline(std::cin, choice);
 
-    std::cout << "Enter license number: ";
-    std::getline(std::cin, license);
+        if (choice == "1") {
+            if (currentAngler.getName().empty()) {
+                std::cout << "Enter angler name: ";
+                std::getline(std::cin, name);
 
-    currentAngler = Angler(name, license);
+                std::cout << "Enter license number: ";
+                std::getline(std::cin, license);
 
-    SeaCreature* creature = collectCreatureInfo();
-    if (creature == nullptr) {
-        std::cout << "Invalid input." << std::endl;
+                currentAngler = Angler(name, license);
+            }
+
+            SeaCreature* creature = collectCreatureInfo();
+            if (creature == nullptr) {
+                std::cout << "Invalid input." << std::endl;
+                continue;
+            }
+
+            std::string result = engine.processCreature(*creature);
+            displayResult(result);
+
+            if (result == "Legal to keep") {
+                addCatchToBag(creature);
+            } else {
+                delete creature;
+            }
+        } else if (choice == "2") {
+            displayResult(engine.processBag(currentBag));
+        } else if (choice == "3") {
+            if (currentAngler.getName().empty()) {
+                std::cout << "No active angler session to save." << std::endl;
+                continue;
+            }
+
+            saveSession();
+            std::cout << "Session saved for " << currentAngler.getName() << "." << std::endl;
+
+            currentAngler.setName("");
+            currentAngler.setLicenseNumber("");
+            currentBag.clear();
+            std::cout << "Start a new session with option 1." << std::endl;
+        } else if (choice == "4") {
+            std::cout << "Enter angler name to load: ";
+            std::getline(std::cin, name);
+            if (name.empty()) {
+                std::cout << "Invalid angler name." << std::endl;
+                continue;
+            }
+
+            loadSession(name);
+            std::cout << "Session loaded." << std::endl;
+        } else if (choice == "5") {
+            running = false;
+        } else {
+            std::cout << "Invalid option." << std::endl;
+        }
+    }
+}
+
+void App::addCatchToBag(SeaCreature* creature) {
+    currentBag.addCreature(creature);
+}
+
+void App::saveSession() const {
+    std::string filename = makeSessionFilename(currentAngler.getName());
+    std::ofstream output(filename.c_str());
+    if (!output) {
         return;
     }
 
-    std::string result = engine.processCreature(*creature);
-    displayResult(result);
+    output << currentAngler.getName() << "\n";
+    output << currentAngler.getLicenseNumber() << "\n";
+    output << "Bag includes:\n";
+    output << "Snapper: " << currentBag.countSpecies("Snapper") << "\n";
+    output << "Tuna: " << currentBag.countSpecies("Tuna") << "\n";
+    output << "Mud Crab: " << currentBag.countSpecies("Mud Crab") << "\n";
+    output << "Lobster: " << currentBag.countSpecies("Lobster") << "\n";
+    output << "Creatures:\n";
 
-    delete creature;
+    const std::vector<SeaCreature*>& creatures = currentBag.getCreatures();
+    for (std::size_t i = 0; i < creatures.size(); ++i) {
+        output << creatures[i]->getCategory() << ",";
+        output << creatures[i]->getSpecies() << ",";
+        output << creatures[i]->getSize() << ",";
+        output << (creatures[i]->hasEggs() ? 1 : 0) << "\n";
+    }
+}
+
+void App::loadSession(const std::string& anglerName) {
+    std::string filename = makeSessionFilename(anglerName);
+    std::ifstream input(filename.c_str());
+    if (!input) {
+        std::cout << "Session file not found." << std::endl;
+        return;
+    }
+
+    currentBag.clear();
+
+    std::string loadedName;
+    std::string loadedLicense;
+    std::getline(input, loadedName);
+    std::getline(input, loadedLicense);
+    currentAngler = Angler(loadedName, loadedLicense);
+
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty() || line.find(',') == std::string::npos) {
+            continue;
+        }
+
+        std::stringstream lineStream(line);
+        std::string type;
+        std::string species;
+        std::string sizeText;
+        std::string eggsText;
+
+        std::getline(lineStream, type, ',');
+        std::getline(lineStream, species, ',');
+        std::getline(lineStream, sizeText, ',');
+        std::getline(lineStream, eggsText, ',');
+
+        if (type.empty() || species.empty() || sizeText.empty() || eggsText.empty()) {
+            continue;
+        }
+
+        double size = 0.0;
+        std::stringstream sizeStream(sizeText);
+        sizeStream >> size;
+        if (sizeStream.fail()) {
+            continue;
+        }
+
+        bool hasEggs = (eggsText == "1");
+        SeaCreature* creature = factory.createCreature(type, species, size, hasEggs);
+        if (creature != nullptr) {
+            currentBag.addCreature(creature);
+        }
+    }
 }
 
 SeaCreature* App::collectCreatureInfo() {
@@ -75,7 +222,7 @@ SeaCreature* App::collectCreatureInfo() {
 
     if (type != "vertebrate" && type != "invertebrate") {
         std::cout << "Warning: invalid creature type. Please choose vertebrate or invertebrate." << std::endl;
-        return 0;
+        return nullptr;
     }
 
     if (type == "vertebrate") {
@@ -88,7 +235,7 @@ SeaCreature* App::collectCreatureInfo() {
     std::string species = normalizeSpeciesForType(type, speciesInput);
     if (species.empty()) {
         std::cout << "Warning: that species is not in the database. You need to have it checked." << std::endl;
-        return 0;
+        return nullptr;
     }
 
     std::cout << "Enter size in cm: ";
@@ -108,15 +255,14 @@ SeaCreature* App::collectCreatureInfo() {
         hasEggs = true;
     }
 
-    if (!validateInput(type, size)) {
-        return 0;
+    if (!validateInput(size)) {
+        return nullptr;
     }
 
     return factory.createCreature(type, species, size, hasEggs);
 }
 
-bool App::validateInput(const std::string& type, double size) const {
-    (void)type;
+bool App::validateInput(double size) const {
     if (size <= 0.0) {
         return false;
     }
